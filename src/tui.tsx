@@ -1,6 +1,6 @@
 /** @jsxImportSource @opentui/solid */
 import { Plugin } from "@opencode/plugin/tui"
-import { createMemo, createSignal, For, Show } from "solid-js"
+import { createMemo, createSignal, For, onMount, Show } from "solid-js"
 import { TextAttributes } from "@opentui/core"
 
 // opencode-session-time: timestamps for your OpenCode sessions.
@@ -69,7 +69,22 @@ const line = (ms: number | undefined, label: string, duration?: string) => {
 const messages = (context: any, sessionID: string): any[] =>
   (context.data.session.message.list(sessionID) ?? []) as any[]
 
-const currentTurn = (list: any[]) => {
+const activity = (message: any) => {
+  let last = message.time?.created ?? 0
+  last = Math.max(last, message.time?.streamed ?? 0, message.time?.completed ?? 0)
+  for (const part of message.content ?? []) {
+    if (!part.time) continue
+    last = Math.max(
+      last,
+      part.time.created ?? 0,
+      part.time.ran ?? 0,
+      part.time.completed ?? 0,
+    )
+  }
+  return last
+}
+
+const currentTurn = (list: any[], fallbackUser?: number) => {
   let lastAssistant = -1
   for (let i = list.length - 1; i >= 0; i--) {
     if (list[i].type === "assistant" && list[i].time?.created) {
@@ -87,7 +102,7 @@ const currentTurn = (list: any[]) => {
   }
 
   if (lastAssistant < 0) {
-    return lastUser >= 0 ? { waiting: true } : undefined
+    return lastUser >= 0 || fallbackUser ? { waiting: true } : undefined
   }
 
   let user = -1
@@ -97,7 +112,21 @@ const currentTurn = (list: any[]) => {
       break
     }
   }
-  if (user < 0) return undefined
+
+  if (user < 0) {
+    if (!fallbackUser) return undefined
+    let lastActivity = 0
+    for (const message of list) {
+      if (message.type !== "assistant") continue
+      lastActivity = Math.max(lastActivity, activity(message))
+    }
+    if (lastActivity < fallbackUser) return { waiting: true }
+    return {
+      start: fallbackUser,
+      last: lastActivity,
+      completed: list[lastAssistant].time?.completed !== undefined,
+    }
+  }
 
   const turn = list
     .slice(user + 1, lastAssistant + 1)
@@ -108,21 +137,7 @@ const currentTurn = (list: any[]) => {
   const last = turn[turn.length - 1]
   let lastActivity = first.time.created as number
   for (const message of turn) {
-    lastActivity = Math.max(
-      lastActivity,
-      message.time?.created ?? 0,
-      message.time?.streamed ?? 0,
-      message.time?.completed ?? 0,
-    )
-    for (const part of message.content ?? []) {
-      if (!part.time) continue
-      lastActivity = Math.max(
-        lastActivity,
-        part.time.created ?? 0,
-        part.time.ran ?? 0,
-        part.time.completed ?? 0,
-      )
-    }
+    lastActivity = Math.max(lastActivity, activity(message))
   }
 
   return {
@@ -157,6 +172,46 @@ const lastReply = (list: any[]) => {
   }
 }
 
+type Anchor = {
+  user?: number
+  thought?: number
+  thoughtDuration?: string
+  reply?: number
+  replyDuration?: string
+  updated?: number
+}
+
+type AnchorStore = Record<string, Anchor>
+
+const mergeAnchor = (current: Anchor, patch: Anchor): Anchor | undefined => {
+  const next: Anchor = { ...current }
+  let changed = false
+
+  if (patch.user !== undefined && patch.user > (current.user ?? 0)) {
+    next.user = patch.user
+    changed = true
+  }
+  if (patch.thought !== undefined && patch.thought >= (current.thought ?? 0)) {
+    if (patch.thought !== current.thought || patch.thoughtDuration !== current.thoughtDuration) {
+      next.thought = patch.thought
+      next.thoughtDuration = patch.thoughtDuration
+      changed = true
+    }
+  }
+  if (patch.reply !== undefined && patch.reply >= (current.reply ?? 0)) {
+    if (patch.reply !== current.reply || patch.replyDuration !== current.replyDuration) {
+      next.reply = patch.reply
+      next.replyDuration = patch.replyDuration
+      changed = true
+    }
+  }
+  if (patch.updated !== undefined && patch.updated > (current.updated ?? 0)) {
+    next.updated = patch.updated
+    changed = true
+  }
+  return changed ? next : undefined
+}
+
 export default Plugin.define({
   id: "session-time",
   setup(context) {
@@ -164,9 +219,135 @@ export default Plugin.define({
     const [tick, setTick] = createSignal(0)
     const bump = () => setTick((t) => t + 1)
 
+    const [anchors, updateAnchors] = context.storage.store<AnchorStore>("session-timings-v1", {
+      initial: {},
+    })
+
+    const remember = (sessionID: string, patch: Anchor) => {
+      if (!mergeAnchor(anchors[sessionID] ?? {}, patch)) return
+      void updateAnchors((draft) => {
+        const next = mergeAnchor(draft[sessionID] ?? {}, patch)
+        if (next) draft[sessionID] = next
+      }).catch(() => {})
+    }
+
+    const rememberFromList = (sessionID: string) => {
+      const list = messages(context, sessionID)
+      const user = lastUser(list)
+      const thought = lastThought(list)
+      const reply = lastReply(list)
+      const patch: Anchor = {}
+      if (user?.time?.created) patch.user = user.time.created
+      if (thought?.time?.created) {
+        patch.thought = thought.time.created
+        patch.thoughtDuration = dur(thought.time?.created, thought.time?.completed)
+      }
+      if (reply?.time?.completed) {
+        patch.reply = reply.time.completed
+        patch.replyDuration = dur(reply.time?.created, reply.time?.completed)
+      }
+      const updated = context.data.session.get(sessionID)?.time?.updated
+      if (updated) patch.updated = updated
+      remember(sessionID, patch)
+    }
+
+    const backfillState = new Map<string, { at: number; done: boolean }>()
+
+    const runBackfill = async (sessionID: string) => {
+      const list = messages(context, sessionID)
+      const cachedUser = lastUser(list)
+      const cachedThought = lastThought(list)
+      const cachedReply = lastReply(list)
+      rememberFromList(sessionID)
+
+      let needReply = !cachedReply
+      let needThought = !cachedThought
+      if (cachedUser && !needReply && !needThought) return
+
+      const response = await context.client.message.list({
+        sessionID,
+        type: "user",
+        order: "desc",
+        limit: 1,
+      })
+      const user = response.data[0] as any
+      if (user?.time?.created) {
+        remember(sessionID, {
+          user: user.time.created,
+          updated: context.data.session.get(sessionID)?.time?.updated,
+        })
+      }
+
+      if (!needReply && !needThought) return
+      // The cursor encodes a timeline position. Reusing the last-user cursor with
+      // the assistant type walks backwards from the user instead of through the
+      // current turn's tool loop, which is what makes long sessions cheap to scan.
+      let cursor = response.cursor.next ?? undefined
+      if (!cursor) return
+
+      for (let page = 0; page < 10 && (needReply || needThought); page++) {
+        const pageResult = await context.client.message
+          .list({
+            sessionID,
+            type: "assistant",
+            limit: 50,
+            cursor,
+          })
+          .catch(() => undefined)
+        if (!pageResult) break
+        for (const message of pageResult.data as any[]) {
+          if (needReply && message.time?.completed) {
+            const part = (message.content ?? []).find(
+              (item: any) => item.type === "text" && item.text?.trim(),
+            )
+            if (part) {
+              remember(sessionID, {
+                reply: message.time.completed,
+                replyDuration: dur(message.time.created, message.time.completed),
+                updated: context.data.session.get(sessionID)?.time?.updated,
+              })
+              needReply = false
+            }
+          }
+          if (needThought) {
+            const part = (message.content ?? []).find(
+              (item: any) => item.type === "reasoning" && item.time?.created,
+            )
+            if (part) {
+              remember(sessionID, {
+                thought: part.time.created,
+                thoughtDuration: dur(part.time.created, part.time.completed),
+                updated: context.data.session.get(sessionID)?.time?.updated,
+              })
+              needThought = false
+            }
+          }
+          if (!needReply && !needThought) break
+        }
+        cursor = pageResult.cursor.next ?? undefined
+        if (!cursor) break
+      }
+    }
+
+    const ensureAnchors = (sessionID: string) => {
+      const now = Date.now()
+      const state = backfillState.get(sessionID)
+      const sessionUpdated = context.data.session.get(sessionID)?.time?.updated ?? 0
+      const anchorUpdated = anchors[sessionID]?.updated ?? 0
+      if (state?.done && sessionUpdated <= anchorUpdated) return
+      if (state && now - state.at < 10_000) return
+      backfillState.set(sessionID, { at: now, done: false })
+      void runBackfill(sessionID)
+        .then(() => {
+          backfillState.set(sessionID, { at: Date.now(), done: true })
+        })
+        .catch(() => {})
+    }
+
     let dirty = true
     let wasRunning = false
     let syncing = false
+    let lastSync = 0
     const unlisten = context.data.listen(() => {
       dirty = true
       bump()
@@ -180,21 +361,31 @@ export default Plugin.define({
         return
       }
 
+      ensureAnchors(sessionID)
+
+      const now = Date.now()
       const running = context.data.session.status(sessionID) === "running"
-      const shouldSync = running || wasRunning || dirty
+      const transition = wasRunning && !running
       wasRunning = running
-      if (!shouldSync || syncing) {
+      const due =
+        (dirty && now - lastSync >= 1_000) ||
+        (running && now - lastSync >= 5_000) ||
+        transition
+
+      if (!due || syncing) {
         bump()
         return
       }
 
       dirty = false
+      lastSync = now
       syncing = true
       Promise.allSettled([
         context.data.session.sync(sessionID),
         context.data.session.message.sync(sessionID),
       ]).finally(() => {
         syncing = false
+        rememberFromList(sessionID)
         bump()
       })
     }
@@ -204,13 +395,19 @@ export default Plugin.define({
 
     // 1) Current-turn elapsed time in the prompt footer.
     const PromptClock = () => {
+      onMount(() => {
+        const route = context.ui.router.current()
+        const sessionID = route.type === "session" ? (route.sessionID as string) : undefined
+        if (sessionID) ensureAnchors(sessionID)
+      })
+
       const elapsed = createMemo(() => {
         tick()
         const route = context.ui.router.current()
         const sessionID = route.type === "session" ? (route.sessionID as string) : undefined
         if (!sessionID) return "—"
 
-        const turn = currentTurn(messages(context, sessionID))
+        const turn = currentTurn(messages(context, sessionID), anchors[sessionID]?.user)
         if (!turn) return "—"
         if ("waiting" in turn) return "00:00"
 
@@ -224,26 +421,36 @@ export default Plugin.define({
 
     // 2) "Session Timings" block in the sidebar (styled like the built-in Context/MCP blocks).
     const SessionTimings = (props: { sessionID: string }) => {
+      onMount(() => ensureAnchors(props.sessionID))
+
       const rows = createMemo(() => {
         tick()
         const list = messages(context, props.sessionID)
         const session = context.data.session.get(props.sessionID)
+        const anchor = anchors[props.sessionID] ?? {}
         const input = lastUser(list)
         const thought = lastThought(list)
         const reply = lastReply(list)
+        const cachedInput = input?.time?.created ?? 0
+        const cachedThought = thought?.time?.created ?? 0
+        const cachedReply = reply?.time?.completed ?? 0
+        const inputTime = Math.max(cachedInput, anchor.user ?? 0) || undefined
+        const thoughtTime = Math.max(cachedThought, anchor.thought ?? 0) || undefined
+        const replyTime = Math.max(cachedReply, anchor.reply ?? 0) || undefined
+        const thoughtDuration =
+          cachedThought >= (anchor.thought ?? 0)
+            ? dur(thought?.time?.created, thought?.time?.completed)
+            : anchor.thoughtDuration
+        const replyDuration =
+          cachedReply >= (anchor.reply ?? 0)
+            ? dur(reply?.time?.created, reply?.time?.completed)
+            : anchor.replyDuration
+
         return {
           started: line(session?.time?.created, "started"),
-          input: line(input?.time?.created, "input"),
-          thought: line(
-            thought?.time?.created,
-            "thought",
-            dur(thought?.time?.created, thought?.time?.completed),
-          ),
-          reply: line(
-            reply?.time?.completed,
-            "reply",
-            dur(reply?.time?.created, reply?.time?.completed),
-          ),
+          input: line(inputTime, "input"),
+          thought: line(thoughtTime, "thought", thoughtDuration),
+          reply: line(replyTime, "reply", replyDuration),
         }
       })
 

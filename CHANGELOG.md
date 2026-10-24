@@ -8,7 +8,14 @@
 - Add seconds to timestamps; same-day timestamps omit the date.
 - Show thought and reply durations in the sidebar.
 - Prompt footer now shows current-turn elapsed time (`⏱ MM:SS`), anchored to the first
-  assistant step after the last user input and frozen when the turn completes.
+  assistant step after the last user input and frozen when the turn completes. Falls
+  back to the last user input time when the turn start is outside the loaded window.
+- Backfill last user input, last text reply, and last thought from the API when they
+  are outside the loaded message window; long tool-only runs no longer show `—`.
+- Persist per-session timestamps in durable storage so the sidebar survives TUI
+  restarts and crashes.
+- Make live refresh event-driven with a 1s minimum interval, a 5s running fallback,
+  and a final idle sync.
 - `/time` panel now lists assistant turns only and includes turn durations.
 
 ## 0.1.1 — 2026-10-11

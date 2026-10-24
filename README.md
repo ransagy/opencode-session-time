@@ -17,13 +17,17 @@ Small TUI plugin built on the official [`@opencode/plugin/tui`](https://opencode
 
 | Where | What |
 | --- | --- |
-| Prompt footer (`prompt.footer.status`) | current-turn elapsed time, `⏱ MM:SS` (or `⏱ H:MM:SS`). Starts when the first assistant step begins after the last user input and freezes when the turn completes. |
-| Sidebar (`sidebar.content`) | `Session Timings` block styled like the built-in `Context`/`MCP` blocks: session start, last user input, last model thought, and last model reply. Each row shows a timestamp, relevant duration, and `x ago` age. |
+| Prompt footer (`prompt.footer.status`) | current-turn elapsed time, `⏱ MM:SS` (or `⏱ H:MM:SS`). Starts when the first assistant step begins after the last user input and freezes when the turn completes. If that step is outside the loaded message window, it falls back to the last user input time. |
+| Sidebar (`sidebar.content`) | `Session Timings` block styled like the built-in `Context`/`MCP` blocks: session start, last user input, last model thought, and last model reply. Each row shows a timestamp, relevant duration, and `x ago` age. Historical values are backfilled from the API when they are outside the loaded window. |
 | `/time` command (session panel) | assistant turn timeline: start time, agent, model, completion time, and duration |
 
 The sidebar block updates live on data events, and relative ages refresh every second.
 The prompt-footer timer is a turn stopwatch, not a wall clock; it shows `00:00` while
 waiting for the first assistant step and `—` when there is no turn.
+
+Per-session anchors are persisted in durable storage, so a TUI restart restores the
+last input, thought, and reply immediately; the API backfill covers new sessions and
+other devices.
 
 Example:
 
