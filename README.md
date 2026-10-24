@@ -1,10 +1,14 @@
 # opencode-session-time
 
-[![npm version](https://img.shields.io/npm/v/opencode-session-time)](https://www.npmjs.com/package/opencode-session-time)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-Timestamps for your [OpenCode](https://opencode.ai) V2 sessions: wall clock in the prompt footer,
-`Session` block in the sidebar (started / last answer), and a `/time` timeline panel.
+Timestamps for your [OpenCode](https://opencode.ai) V2 sessions: a wall clock in the
+prompt footer, a `Session Timings` block in the sidebar, and a `/time` timeline panel.
+
+> This is a fork of
+> [LazyGatto/opencode-session-time](https://github.com/LazyGatto/opencode-session-time)
+> that adds last user input, last model thought, and last model reply timings, plus
+> relative ages.
 
 Small TUI plugin built on the official [`@opencode/plugin/tui`](https://opencode.ai/v2/docs/build/plugins/cli/) API.
 
@@ -12,12 +16,23 @@ Small TUI plugin built on the official [`@opencode/plugin/tui`](https://opencode
 
 | Where | What |
 | --- | --- |
-| Prompt footer (`prompt.footer.status`) | wall clock, `DD.MM, HH:mm`, refreshes every 30s |
-| Sidebar (`sidebar.content`) | `Session` block styled like the built-in `Context`/`MCP` blocks: `<date, time> started` and `<date, time> last answer` |
-| `/time` command (session panel) | per-turn timeline: start time, agent, model, completion time |
+| Prompt footer (`prompt.footer.status`) | wall clock, `HH:mm:ss`, refreshes every second |
+| Sidebar (`sidebar.content`) | `Session Timings` block styled like the built-in `Context`/`MCP` blocks: session start, last user input, last model thought, and last model reply. Each row shows a timestamp, relevant duration, and `x ago` age. |
+| `/time` command (session panel) | assistant turn timeline: start time, agent, model, completion time, and duration |
 
-Both timestamps update live: the plugin re-renders on data events (so `last answer`
-appears as soon as a model reply lands).
+The sidebar block updates live on data events, and relative ages refresh every second.
+
+Example:
+
+```text
+Session Timings
+16:27:31 started · 1d ago
+17:43:12 input · 3m ago
+17:43:20 thought · 2.1s · 3m ago
+17:44:02 reply · 8.4s · 2m ago
+```
+
+Same-day timestamps omit the date. Older timestamps include it (`23.10, 16:27:31`).
 
 ## Why the sidebar and not under each message?
 
@@ -29,17 +44,18 @@ is the closest native place.
 
 ## Install
 
-```jsonc
-// ~/.config/opencode/cli.json
-{
-  "plugins": ["opencode-session-time"]
-}
-```
-
-Or install it explicitly:
+From this fork's GitHub repository:
 
 ```bash
-npm i -g opencode-session-time
+opencode plugin add github:ransagy/opencode-session-time
+```
+
+Or configure it manually in `~/.config/opencode/cli.json`:
+
+```jsonc
+{
+  "plugins": ["github:ransagy/opencode-session-time"]
+}
 ```
 
 Requirements: OpenCode V2; `@opentui/core`, `@opentui/solid`, `solid-js` are peer
@@ -47,10 +63,10 @@ dependencies provided by the host.
 
 ## Notes
 
-- Format is `DD.MM, HH:mm` — tweak `fmt()` in `src/tui.tsx` to taste.
-- Plugin edits hot-reload: the plugin is rebuilt on reconciliation, no TUI restart needed.
 - `/time` shows the timeline for the session you are currently in.
+- The sidebar block uses `append`, so it appears after the built-in Context/MCP panels.
+- Plugin edits hot-reload: the plugin is rebuilt on reconciliation, no TUI restart needed.
 
 ## License
 
-MIT
+MIT. Original work copyright (c) 2026 LazyGatto; see [LICENSE](LICENSE).

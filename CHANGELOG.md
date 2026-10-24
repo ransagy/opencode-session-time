@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0 — 2026-10-24
+
+- Rename the sidebar block to `Session Timings`.
+- Show session start, last user input, last model thought, and last model reply.
+- Add relative ages (`just now`, `3m ago`, `2d ago`) that refresh every second.
+- Add seconds to timestamps; same-day timestamps omit the date.
+- Show thought and reply durations in the sidebar.
+- Prompt-footer clock now shows `HH:mm:ss` and refreshes every second.
+- `/time` panel now lists assistant turns only and includes turn durations.
+
 ## 0.1.1 — 2026-10-11
 
 - Fix: explicit `@jsxImportSource @opentui/solid` (pragma + tsconfig) — the plugin loader

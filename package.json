@@ -1,7 +1,7 @@
 {
   "name": "opencode-session-time",
-  "version": "0.1.1",
-  "description": "OpenCode V2 CLI plugin: wall-clock time in the prompt footer, session start / last answer timestamps in the sidebar, and a /time timeline panel.",
+  "version": "0.2.0",
+  "description": "OpenCode V2 CLI plugin: wall-clock time in the prompt footer, session/input/thought/reply timings in the sidebar, and a /time timeline panel.",
   "author": "LazyGatto",
   "homepage": "https://github.com/LazyGatto/opencode-session-time#readme",
   "bugs": {
