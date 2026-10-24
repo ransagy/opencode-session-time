@@ -1,11 +1,11 @@
 /** @jsxImportSource @opentui/solid */
 import { Plugin } from "@opencode/plugin/tui"
-import { createSignal, For, Show } from "solid-js"
+import { createMemo, createSignal, For, Show } from "solid-js"
 import { TextAttributes } from "@opentui/core"
 
 // opencode-session-time: timestamps for your OpenCode sessions.
 //
-//  - prompt.footer.status — wall clock near the prompt;
+//  - prompt.footer.status — elapsed time for the current turn near the prompt;
 //  - sidebar.content      — a "Session Timings" block (started / input / thought / reply);
 //  - session.panel        — a /time command with the per-turn timeline.
 //
@@ -15,10 +15,13 @@ import { TextAttributes } from "@opentui/core"
 
 const pad = (n: number) => String(n).padStart(2, "0")
 
-const clock = (ms?: number) => {
-  if (!ms) return "—"
-  const d = new Date(ms)
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+const stopwatch = (ms?: number) => {
+  if (ms === undefined || ms < 0) return "—"
+  const total = Math.floor(ms / 1000)
+  const hours = Math.floor(total / 3600)
+  const minutes = Math.floor((total % 3600) / 60)
+  const seconds = total % 60
+  return hours > 0 ? `${hours}:${pad(minutes)}:${pad(seconds)}` : `${pad(minutes)}:${pad(seconds)}`
 }
 
 const fmt = (ms?: number) => {
@@ -66,6 +69,69 @@ const line = (ms: number | undefined, label: string, duration?: string) => {
 const messages = (context: any, sessionID: string): any[] =>
   (context.data.session.message.list(sessionID) ?? []) as any[]
 
+const currentTurn = (list: any[]) => {
+  let lastAssistant = -1
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i].type === "assistant" && list[i].time?.created) {
+      lastAssistant = i
+      break
+    }
+  }
+
+  let lastUser = -1
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i].type === "user") {
+      lastUser = i
+      break
+    }
+  }
+
+  if (lastAssistant < 0) {
+    return lastUser >= 0 ? { waiting: true } : undefined
+  }
+
+  let user = -1
+  for (let i = lastAssistant - 1; i >= 0; i--) {
+    if (list[i].type === "user") {
+      user = i
+      break
+    }
+  }
+  if (user < 0) return undefined
+
+  const turn = list
+    .slice(user + 1, lastAssistant + 1)
+    .filter((message) => message.type === "assistant" && message.time?.created)
+  if (turn.length === 0) return undefined
+
+  const first = turn[0]
+  const last = turn[turn.length - 1]
+  let lastActivity = first.time.created as number
+  for (const message of turn) {
+    lastActivity = Math.max(
+      lastActivity,
+      message.time?.created ?? 0,
+      message.time?.streamed ?? 0,
+      message.time?.completed ?? 0,
+    )
+    for (const part of message.content ?? []) {
+      if (!part.time) continue
+      lastActivity = Math.max(
+        lastActivity,
+        part.time.created ?? 0,
+        part.time.ran ?? 0,
+        part.time.completed ?? 0,
+      )
+    }
+  }
+
+  return {
+    start: first.time.created as number,
+    last: lastActivity,
+    completed: last.time?.completed !== undefined,
+  }
+}
+
 const lastUser = (list: any[]) => {
   for (let i = list.length - 1; i >= 0; i--) {
     if (list[i].type === "user") return list[i]
@@ -94,85 +160,154 @@ const lastReply = (list: any[]) => {
 export default Plugin.define({
   id: "session-time",
   setup(context) {
-    // One tick drives every slot: any data event re-renders, plus a 1s timer for the clock and ages.
+    // One tick drives every slot: any data event re-renders, plus a 1s timer for the stopwatch and ages.
     const [tick, setTick] = createSignal(0)
     const bump = () => setTick((t) => t + 1)
-    const unlisten = context.data.listen(() => bump())
-    const timer = setInterval(bump, 1_000)
 
-    // 1) Wall clock in the prompt footer.
-    const disposeClock = context.ui.slot({
-      append: "prompt.footer.status",
-      render: () => {
-        tick()
-        return <text fg={context.theme.text.muted}>{clock(Date.now())}</text>
-      },
+    let dirty = true
+    let wasRunning = false
+    let syncing = false
+    const unlisten = context.data.listen(() => {
+      dirty = true
+      bump()
     })
 
-    // 2) "Session Timings" block in the sidebar (styled like the built-in Context/MCP blocks).
-    const disposeSide = context.ui.slot({
-      append: "sidebar.content",
-      render: ({ sessionID }) => {
+    const refresh = () => {
+      const route = context.ui.router.current()
+      const sessionID = route.type === "session" ? (route.sessionID as string) : undefined
+      if (!sessionID) {
+        bump()
+        return
+      }
+
+      const running = context.data.session.status(sessionID) === "running"
+      const shouldSync = running || wasRunning || dirty
+      wasRunning = running
+      if (!shouldSync || syncing) {
+        bump()
+        return
+      }
+
+      dirty = false
+      syncing = true
+      Promise.allSettled([
+        context.data.session.sync(sessionID),
+        context.data.session.message.sync(sessionID),
+      ]).finally(() => {
+        syncing = false
+        bump()
+      })
+    }
+
+    const timer = setInterval(refresh, 1_000)
+    refresh()
+
+    // 1) Current-turn elapsed time in the prompt footer.
+    const PromptClock = () => {
+      const elapsed = createMemo(() => {
         tick()
-        const list = messages(context, sessionID)
-        const session = context.data.session.get(sessionID)
+        const route = context.ui.router.current()
+        const sessionID = route.type === "session" ? (route.sessionID as string) : undefined
+        if (!sessionID) return "—"
+
+        const turn = currentTurn(messages(context, sessionID))
+        if (!turn) return "—"
+        if ("waiting" in turn) return "00:00"
+
+        const status = context.data.session.status(sessionID)
+        const running = status === "running" || (status === undefined && !turn.completed)
+        return stopwatch((running ? Date.now() : turn.last) - turn.start)
+      })
+
+      return <text fg={context.theme.text.muted} content={`⏱ ${elapsed()}`} />
+    }
+
+    // 2) "Session Timings" block in the sidebar (styled like the built-in Context/MCP blocks).
+    const SessionTimings = (props: { sessionID: string }) => {
+      const rows = createMemo(() => {
+        tick()
+        const list = messages(context, props.sessionID)
+        const session = context.data.session.get(props.sessionID)
         const input = lastUser(list)
         const thought = lastThought(list)
         const reply = lastReply(list)
-        const thoughtDuration = dur(thought?.time?.created, thought?.time?.completed)
-        const replyDuration = dur(reply?.time?.created, reply?.time?.completed)
+        return {
+          started: line(session?.time?.created, "started"),
+          input: line(input?.time?.created, "input"),
+          thought: line(
+            thought?.time?.created,
+            "thought",
+            dur(thought?.time?.created, thought?.time?.completed),
+          ),
+          reply: line(
+            reply?.time?.completed,
+            "reply",
+            dur(reply?.time?.created, reply?.time?.completed),
+          ),
+        }
+      })
 
-        return (
-          <box flexDirection="column">
-            <text fg={context.theme.text.base} attributes={TextAttributes.BOLD}>Session Timings</text>
-            <text fg={context.theme.text.muted}>{line(session?.time?.created, "started")}</text>
-            <text fg={context.theme.text.muted}>{line(input?.time?.created, "input")}</text>
-            <text fg={context.theme.text.muted}>
-              {line(thought?.time?.created, "thought", thoughtDuration)}
-            </text>
-            <text fg={context.theme.text.muted}>
-              {line(reply?.time?.completed, "reply", replyDuration)}
-            </text>
-          </box>
-        )
-      },
-    })
+      return (
+        <box flexDirection="column">
+          <text fg={context.theme.text.base} attributes={TextAttributes.BOLD}>Session Timings</text>
+          <text fg={context.theme.text.muted} content={rows().started} />
+          <text fg={context.theme.text.muted} content={rows().input} />
+          <text fg={context.theme.text.muted} content={rows().thought} />
+          <text fg={context.theme.text.muted} content={rows().reply} />
+        </box>
+      )
+    }
 
     // 3) /time — per-turn timeline panel.
+    const Timeline = () => {
+      const rows = createMemo(() => {
+        tick()
+        const route = context.ui.router.current()
+        const sessionID = route.type === "session" ? (route.sessionID as string) : undefined
+        return sessionID
+          ? messages(context, sessionID).filter((message) => message.type === "assistant")
+          : []
+      })
+
+      return (
+        <box flexDirection="column">
+          <text fg={context.theme.text.base} attributes={TextAttributes.BOLD}>Timeline</text>
+          <For each={rows()}>
+            {(message: any) => {
+              const duration = dur(message.time?.created, message.time?.completed)
+              return (
+                <text fg={context.theme.text.muted}>
+                  {fmt(message.time?.created)} · {message.agent ?? "—"} ·{" "}
+                  {message.model?.id ?? message.model ?? "—"} →{" "}
+                  {message.time?.completed
+                    ? `${fmt(message.time.completed)}${duration ? ` · ${duration}` : ""}`
+                    : "in progress"}
+                </text>
+              )
+            }}
+          </For>
+          <Show when={rows().length === 0}>
+            <text fg={context.theme.text.muted}>No assistant turns yet</text>
+          </Show>
+        </box>
+      )
+    }
+
+    const disposeClock = context.ui.slot({
+      append: "prompt.footer.status",
+      render: () => <PromptClock />,
+    })
+
+    const disposeSide = context.ui.slot({
+      append: "sidebar.content",
+      render: ({ sessionID }) => <SessionTimings sessionID={sessionID} />,
+    })
+
     const disposePanel = context.ui.slot({
       append: "session.panel",
       render: (panel) => (
         <Show when={panel.name === "session-time.timeline"}>
-          {(() => {
-            tick()
-            const route = context.ui.router.current()
-            const sessionID = route.type === "session" ? (route.sessionID as string) : undefined
-            const list = sessionID
-              ? messages(context, sessionID).filter((message) => message.type === "assistant")
-              : []
-            return (
-              <box flexDirection="column">
-                <text fg={context.theme.text.base} attributes={TextAttributes.BOLD}>Timeline</text>
-                <For each={list}>
-                  {(message: any) => {
-                    const duration = dur(message.time?.created, message.time?.completed)
-                    return (
-                      <text fg={context.theme.text.muted}>
-                        {fmt(message.time?.created)} · {message.agent ?? "—"} ·{" "}
-                        {message.model?.id ?? message.model ?? "—"} →{" "}
-                        {message.time?.completed
-                          ? `${fmt(message.time.completed)}${duration ? ` · ${duration}` : ""}`
-                          : "in progress"}
-                      </text>
-                    )
-                  }}
-                </For>
-                <Show when={list.length === 0}>
-                  <text fg={context.theme.text.muted}>No assistant turns yet</text>
-                </Show>
-              </box>
-            )
-          })()}
+          <Timeline />
         </Show>
       ),
     })

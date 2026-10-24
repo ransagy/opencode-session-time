@@ -7,7 +7,8 @@
 - Add relative ages (`just now`, `3m ago`, `2d ago`) that refresh every second.
 - Add seconds to timestamps; same-day timestamps omit the date.
 - Show thought and reply durations in the sidebar.
-- Prompt-footer clock now shows `HH:mm:ss` and refreshes every second.
+- Prompt footer now shows current-turn elapsed time (`⏱ MM:SS`), anchored to the first
+  assistant step after the last user input and frozen when the turn completes.
 - `/time` panel now lists assistant turns only and includes turn durations.
 
 ## 0.1.1 — 2026-10-11

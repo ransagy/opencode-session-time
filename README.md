@@ -2,8 +2,9 @@
 
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-Timestamps for your [OpenCode](https://opencode.ai) V2 sessions: a wall clock in the
-prompt footer, a `Session Timings` block in the sidebar, and a `/time` timeline panel.
+Timestamps for your [OpenCode](https://opencode.ai) V2 sessions: a current-turn
+stopwatch in the prompt footer, a `Session Timings` block in the sidebar, and a
+`/time` timeline panel.
 
 > This is a fork of
 > [LazyGatto/opencode-session-time](https://github.com/LazyGatto/opencode-session-time)
@@ -16,11 +17,13 @@ Small TUI plugin built on the official [`@opencode/plugin/tui`](https://opencode
 
 | Where | What |
 | --- | --- |
-| Prompt footer (`prompt.footer.status`) | wall clock, `HH:mm:ss`, refreshes every second |
+| Prompt footer (`prompt.footer.status`) | current-turn elapsed time, `⏱ MM:SS` (or `⏱ H:MM:SS`). Starts when the first assistant step begins after the last user input and freezes when the turn completes. |
 | Sidebar (`sidebar.content`) | `Session Timings` block styled like the built-in `Context`/`MCP` blocks: session start, last user input, last model thought, and last model reply. Each row shows a timestamp, relevant duration, and `x ago` age. |
 | `/time` command (session panel) | assistant turn timeline: start time, agent, model, completion time, and duration |
 
 The sidebar block updates live on data events, and relative ages refresh every second.
+The prompt-footer timer is a turn stopwatch, not a wall clock; it shows `00:00` while
+waiting for the first assistant step and `—` when there is no turn.
 
 Example:
 
@@ -33,6 +36,12 @@ Session Timings
 ```
 
 Same-day timestamps omit the date. Older timestamps include it (`23.10, 16:27:31`).
+
+The prompt footer shows the current-turn stopwatch:
+
+```text
+⏱ 03:12
+```
 
 ## Why the sidebar and not under each message?
 
