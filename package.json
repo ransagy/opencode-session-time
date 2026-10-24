@@ -1,11 +1,14 @@
 {
   "name": "opencode-session-time",
   "version": "0.2.0",
-  "description": "OpenCode V2 CLI plugin: wall-clock time in the prompt footer, session/input/thought/reply timings in the sidebar, and a /time timeline panel.",
+  "description": "OpenCode V2 CLI plugin: current-turn stopwatch, Session Timings sidebar (started/input/thought/reply + relative ages), and a /time timeline panel.",
   "author": "LazyGatto",
-  "homepage": "https://github.com/LazyGatto/opencode-session-time#readme",
+  "contributors": [
+    "Ran Sagy (https://github.com/ransagy)"
+  ],
+  "homepage": "https://github.com/ransagy/opencode-session-time#readme",
   "bugs": {
-    "url": "https://github.com/LazyGatto/opencode-session-time/issues"
+    "url": "https://github.com/ransagy/opencode-session-time/issues"
   },
   "type": "module",
   "exports": {
@@ -21,7 +24,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/LazyGatto/opencode-session-time.git"
+    "url": "git+https://github.com/ransagy/opencode-session-time.git"
   },
   "dependencies": {
     "@opencode/plugin": "latest"

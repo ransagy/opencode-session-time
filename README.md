@@ -57,22 +57,24 @@ is the closest native place.
 
 ## Install
 
-From this fork's GitHub repository:
+This fork is TUI-only. Install the pinned release tag from GitHub:
 
 ```bash
-opencode plugin add github:ransagy/opencode-session-time
+opencode plugin add github:ransagy/opencode-session-time#v0.2.0
 ```
 
-Or configure it manually in `~/.config/opencode/cli.json`:
+`opencode plugin add` writes the plugin to your global CLI configuration and installs
+it from GitHub. Restart the TUI after installing.
 
-```jsonc
-{
-  "plugins": ["github:ransagy/opencode-session-time"]
-}
+To track the development branch instead:
+
+```bash
+opencode plugin add github:ransagy/opencode-session-time#feat/session-timings
 ```
 
 Requirements: OpenCode V2; `@opentui/core`, `@opentui/solid`, `solid-js` are peer
-dependencies provided by the host.
+dependencies provided by the host. This is a terminal-client plugin; web and desktop
+clients do not load TUI plugins.
 
 ## Notes
 
