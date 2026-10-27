@@ -1,6 +1,6 @@
 {
   "name": "opencode-session-time",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "OpenCode V2 CLI plugin: current-turn stopwatch, Session Timings sidebar (started/input/thought/reply + relative ages), and a /time timeline panel.",
   "author": "LazyGatto",
   "contributors": [

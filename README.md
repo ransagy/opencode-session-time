@@ -18,7 +18,7 @@ Small TUI plugin built on the official [`@opencode/plugin/tui`](https://opencode
 | Where | What |
 | --- | --- |
 | Prompt footer (`prompt.footer.status`) | current-turn elapsed time, `⏱ MM:SS` (or `⏱ H:MM:SS`). Starts when the first assistant step begins after the last user input and freezes when the turn completes. If that step is outside the loaded message window, it falls back to the last user input time. |
-| Sidebar (`sidebar.content`) | `Session Timings` block styled like the built-in `Context`/`MCP` blocks: session start, last user input, last model thought, and last model reply. Each row shows a timestamp, relevant duration, and `x ago` age. Historical values are backfilled from the API when they are outside the loaded window. |
+| Sidebar (`sidebar.content`) | `Session Timings` block styled like the built-in `Context`/`MCP` blocks: session start, last user input, last model thought, and last model reply. Each row shows a timestamp, relevant duration, and `x ago` age. Historical values are backfilled from the API when they are outside the loaded window. Rows are sorted oldest to newest; rows without a timestamp stay at the bottom. |
 | `/time` command (session panel) | assistant turn timeline: start time, agent, model, completion time, and duration |
 
 The sidebar block updates live on data events, and relative ages refresh every second.
@@ -60,7 +60,7 @@ is the closest native place.
 This fork is TUI-only. Install the pinned release tag from GitHub:
 
 ```bash
-opencode plugin add github:ransagy/opencode-session-time#v0.2.0
+opencode plugin add github:ransagy/opencode-session-time#v0.2.1
 ```
 
 `opencode plugin add` writes the plugin to your global CLI configuration and installs

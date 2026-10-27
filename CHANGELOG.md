@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1 — 2026-10-27
+
+- Sort `Session Timings` rows oldest to newest so the sidebar always shows the
+  sequence of events; rows without a timestamp stay at the bottom.
+
 ## 0.2.0 — 2026-10-24
 
 - Rename the sidebar block to `Session Timings`.

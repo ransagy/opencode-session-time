@@ -183,6 +183,16 @@ type Anchor = {
 
 type AnchorStore = Record<string, Anchor>
 
+type TimingKey = "started" | "input" | "thought" | "reply"
+
+type TimingValue = {
+  at?: number
+  text: string
+  rank: number
+}
+
+type TimingValues = Record<TimingKey, TimingValue>
+
 const mergeAnchor = (current: Anchor, patch: Anchor): Anchor | undefined => {
   const next: Anchor = { ...current }
   let changed = false
@@ -423,7 +433,7 @@ export default Plugin.define({
     const SessionTimings = (props: { sessionID: string }) => {
       onMount(() => ensureAnchors(props.sessionID))
 
-      const rows = createMemo(() => {
+      const values = createMemo((): TimingValues => {
         tick()
         const list = messages(context, props.sessionID)
         const session = context.data.session.get(props.sessionID)
@@ -445,22 +455,40 @@ export default Plugin.define({
           cachedReply >= (anchor.reply ?? 0)
             ? dur(reply?.time?.created, reply?.time?.completed)
             : anchor.replyDuration
+        const started = session?.time?.created
 
         return {
-          started: line(session?.time?.created, "started"),
-          input: line(inputTime, "input"),
-          thought: line(thoughtTime, "thought", thoughtDuration),
-          reply: line(replyTime, "reply", replyDuration),
+          started: { at: started, rank: 0, text: line(started, "started") },
+          input: { at: inputTime, rank: 1, text: line(inputTime, "input") },
+          thought: {
+            at: thoughtTime,
+            rank: 2,
+            text: line(thoughtTime, "thought", thoughtDuration),
+          },
+          reply: { at: replyTime, rank: 3, text: line(replyTime, "reply", replyDuration) },
         }
+      })
+
+      const order = createMemo(() => {
+        const current = values()
+        const keys: TimingKey[] = ["started", "input", "thought", "reply"]
+        return keys.sort((left, right) => {
+          const a = current[left]
+          const b = current[right]
+          if (a.at === undefined && b.at === undefined) return a.rank - b.rank
+          if (a.at === undefined) return 1
+          if (b.at === undefined) return -1
+          if (a.at !== b.at) return a.at - b.at
+          return a.rank - b.rank
+        })
       })
 
       return (
         <box flexDirection="column">
           <text fg={context.theme.text.base} attributes={TextAttributes.BOLD}>Session Timings</text>
-          <text fg={context.theme.text.muted} content={rows().started} />
-          <text fg={context.theme.text.muted} content={rows().input} />
-          <text fg={context.theme.text.muted} content={rows().thought} />
-          <text fg={context.theme.text.muted} content={rows().reply} />
+          <For each={order()}>
+            {(key) => <text fg={context.theme.text.muted} content={values()[key].text} />}
+          </For>
         </box>
       )
     }
