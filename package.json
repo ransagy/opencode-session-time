@@ -1,7 +1,7 @@
 {
   "name": "opencode-session-time",
   "version": "0.4.0",
-  "description": "OpenCode V2 TUI plugin: current-turn stopwatch, opt-in relative ages, collapsible Session / Last answer sidebar, and a searchable /time timeline popup.",
+  "description": "OpenCode V2 TUI plugin: current-turn stopwatch, classic or v0.4 sidebar layout, opt-in relative ages, and a searchable /time timeline popup.",
   "author": "LazyGatto",
   "contributors": [
     "Ran Sagy (https://github.com/ransagy)"

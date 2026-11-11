@@ -1,6 +1,6 @@
 /** @jsxImportSource @opentui/solid */
 import { Plugin } from "@opencode/plugin/tui"
-import { createEffect, createMemo, createSignal, onCleanup, onMount, Show } from "solid-js"
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js"
 import { ago, nextBoundary } from "./ages"
 
 // opencode-session-time: timestamps for your OpenCode sessions.
@@ -57,6 +57,11 @@ const durMs = (ms: number) => {
   const hours = Math.floor(minutes / 60)
   if (hours < 24) return `${hours}h${pad(minutes % 60)}m`
   return `${Math.floor(hours / 24)}d${pad(hours % 24)}h`
+}
+
+const line = (ms: number | undefined, label: string, duration?: string, now?: number) => {
+  if (!ms) return `— ${label}`
+  return `${fmt(ms)} ${label}${duration ? ` · ${duration}` : ""}${now === undefined ? "" : ` · ${ago(ms, now)}`}`
 }
 
 const preview = (message: any): string => {
@@ -208,6 +213,17 @@ const lastUser = (list: any[]) => {
   }
 }
 
+const lastThought = (list: any[]) => {
+  for (let i = list.length - 1; i >= 0; i--) {
+    const message = list[i]
+    if (message.type !== "assistant" || !Array.isArray(message.content)) continue
+    for (let j = message.content.length - 1; j >= 0; j--) {
+      const part = message.content[j]
+      if (part.type === "reasoning" && part.time?.created) return part
+    }
+  }
+}
+
 const thoughtStats = (list: any[]) => {
   // reasoning phases since the last user input (all assistant steps of the turn)
   let userIdx = -1
@@ -238,6 +254,16 @@ const lastReply = (list: any[]) => {
     if (message.content?.some((part: any) => part.type === "text" && part.text?.trim())) return message
   }
 }
+
+type TimingKey = "started" | "input" | "thought" | "reply"
+
+type TimingValue = {
+  at?: number
+  text: string
+  rank: number
+}
+
+type TimingValues = Record<TimingKey, TimingValue>
 
 type Anchor = {
   user?: number
@@ -290,12 +316,23 @@ export default Plugin.define({
   id: "session-time",
   setup(context) {
     const relativeAges = context.options.relativeAges === true
+    const defaultLayout = context.options.sidebarLayout === "blocks" ? "blocks" : "classic"
 
     // One tick drives the footer stopwatch. Sidebar ages use a boundary timer
     // when enabled, so an idle session does not repaint every second.
     const [tick, setTick] = createSignal(0)
     const [agesNow, setAgesNow] = createSignal(Date.now())
     const bump = () => setTick((t) => t + 1)
+
+    const [layout, updateLayout] = context.storage.store("layout", {
+      initial: { mode: defaultLayout },
+    })
+    const layoutMode = () => (layout.mode === "blocks" ? "blocks" : "classic")
+    const toggleLayout = () => {
+      void updateLayout((draft) => {
+        draft.mode = layoutMode() === "classic" ? "blocks" : "classic"
+      }).catch(() => {})
+    }
 
     const [anchors, updateAnchors] = context.storage.store<AnchorStore>("session-timings-v1", {
       initial: {},
@@ -537,8 +574,8 @@ export default Plugin.define({
         onMouseUp={(e: any) => { e?.stopPropagation?.(); void openTimeline() }} />
     }
 
-    // 2) "Session Timings" block in the sidebar (styled like the built-in Context/MCP blocks).
-    const SessionTimings = (props: { sessionID: string }) => {
+    // 2) v0.4.0 "Session" / "Last answer" block in the sidebar.
+    const SessionSidebar = (props: { sessionID: string }) => {
       onMount(() => ensureAnchors(props.sessionID))
       const theme = context.theme
       const [view, updateView] = context.storage.store("view", { initial: { open: true } })
@@ -636,6 +673,16 @@ export default Plugin.define({
                 <span style={{ fg: theme.text.muted }}> ({model().summary})</span>
               </Show>
             </text>
+            <box flexGrow={1} />
+            <text
+              style={{ fg: theme.text.muted }}
+              onMouseUp={(e: any) => {
+                e?.stopPropagation?.()
+                toggleLayout()
+              }}
+            >
+              ⇄
+            </text>
           </box>
 
           <Show when={view.open}>
@@ -700,6 +747,98 @@ export default Plugin.define({
       )
     }
 
+    // 3) Classic v0.3.2 four-row block.
+    const ClassicSidebar = (props: { sessionID: string }) => {
+      const theme = context.theme
+      onMount(() => ensureAnchors(props.sessionID))
+
+      const values = createMemo((): TimingValues => {
+        if (relativeAges) agesNow()
+        const now = relativeAges ? Date.now() : undefined
+        const list = messages(context, props.sessionID)
+        const session = context.data.session.get(props.sessionID)
+        const anchor = anchors[props.sessionID] ?? {}
+        const input = lastUser(list)
+        const thought = lastThought(list)
+        const reply = lastReply(list)
+        const cachedInput = input?.time?.created ?? 0
+        const cachedThought = thought?.time?.created ?? 0
+        const cachedReply = reply?.time?.completed ?? 0
+        const inputTime = Math.max(cachedInput, anchor.user ?? 0) || undefined
+        const thoughtTime = Math.max(cachedThought, anchor.thought ?? 0) || undefined
+        const replyTime = Math.max(cachedReply, anchor.reply ?? 0) || undefined
+        const thoughtDuration =
+          cachedThought >= (anchor.thought ?? 0)
+            ? dur(thought?.time?.created, thought?.time?.completed)
+            : anchor.thoughtDuration
+        const replyDuration =
+          cachedReply >= (anchor.reply ?? 0)
+            ? dur(reply?.time?.created, reply?.time?.completed)
+            : anchor.replyDuration
+        const started = session?.time?.created
+
+        return {
+          started: { at: started, rank: 0, text: line(started, "started", undefined, now) },
+          input: { at: inputTime, rank: 1, text: line(inputTime, "input", undefined, now) },
+          thought: {
+            at: thoughtTime,
+            rank: 2,
+            text: line(thoughtTime, "thought", thoughtDuration, now),
+          },
+          reply: { at: replyTime, rank: 3, text: line(replyTime, "reply", replyDuration, now) },
+        }
+      })
+
+      const order = createMemo(() => {
+        const current = values()
+        const keys: TimingKey[] = ["started", "input", "thought", "reply"]
+        return keys.sort((left, right) => {
+          const a = current[left]
+          const b = current[right]
+          if (a.at === undefined && b.at === undefined) return a.rank - b.rank
+          if (a.at === undefined) return 1
+          if (b.at === undefined) return -1
+          if (a.at !== b.at) return a.at - b.at
+          return a.rank - b.rank
+        })
+      })
+
+      createEffect(() => {
+        if (!relativeAges) return
+        const current = values()
+        const now = Date.now()
+        const next = nextBoundary(
+          [current.started.at, current.input.at, current.thought.at, current.reply.at],
+          now,
+        )
+        if (next === undefined) return
+        const delay = Math.min(MAX_TIMEOUT, Math.max(250, next - now))
+        const timer = setTimeout(() => setAgesNow(Date.now()), delay)
+        onCleanup(() => clearTimeout(timer))
+      })
+
+      return (
+        <box flexDirection="column">
+          <box flexDirection="row">
+            <text><b>Session Timings</b></text>
+            <box flexGrow={1} />
+            <text
+              style={{ fg: theme.text.muted }}
+              onMouseUp={(e: any) => {
+                e?.stopPropagation?.()
+                toggleLayout()
+              }}
+            >
+              ⇄
+            </text>
+          </box>
+          <For each={order()}>
+            {(key) => <text fg={theme.text.muted} content={values()[key].text} />}
+          </For>
+        </box>
+      )
+    }
+
     const disposeClock = context.ui.slot({
       append: "prompt.footer.status",
       render: () => <PromptClock />,
@@ -707,7 +846,11 @@ export default Plugin.define({
 
     const disposeSide = context.ui.slot({
       append: "sidebar.content",
-      render: ({ sessionID }) => <SessionTimings sessionID={sessionID} />,
+      render: ({ sessionID }) => (
+        <Show when={layoutMode() === "classic"} fallback={<SessionSidebar sessionID={sessionID} />}>
+          <ClassicSidebar sessionID={sessionID} />
+        </Show>
+      ),
     })
 
     // Opens the /time timeline popup — shared by the /time command and the footer click.
@@ -794,6 +937,12 @@ export default Plugin.define({
             title: "Time: session timeline",
             slash: { name: "time" },
             run: () => { void openTimeline() },
+          },
+          {
+            id: "session-time.layout",
+            title: "Time: toggle sidebar layout",
+            slash: { name: "time-layout" },
+            run: () => toggleLayout(),
           },
         ],
       }))

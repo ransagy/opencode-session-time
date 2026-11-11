@@ -2,12 +2,16 @@
 
 ## Unreleased (fork)
 
-- Add opt-in `relativeAges` on the v0.4.0 sidebar (default off). Ages are
-  minute-granularity and appended to the muted label on `Started`, `User`,
-  `Thought`, and `Reply`; the absolute time stays right-aligned.
+- Add a sidebar layout toggle: `classic` (v0.3.2 four-row `Session Timings`) or
+  `blocks` (v0.4 `Session` / `Last answer`). Click `⇄` in the header or run
+  `/time-layout`; the choice is persisted in plugin storage. `sidebarLayout`
+  sets the initial default (`classic` in this fork).
+- Add opt-in `relativeAges` on both layouts (default off). Ages are
+  minute-granularity and appended to the muted labels; the absolute time stays
+  right-aligned in the blocks layout.
 - One timeout to the next displayed boundary; no 1s sidebar repaint. Collapsing
-  the `Session` block stops the timer.
-- Preserve v0.4.0 behavior exactly when the option is off.
+  the blocks `Session` header stops the timer.
+- Preserve the selected layout and v0.4 behavior when options are off.
 - Document that current OpenCode packaged/npm TUI plugins can freeze because the
   host does not apply its Solid JSX transform under `node_modules`
   (`anomalyco/opencode#39986`); an absolute local path is the workaround.
