@@ -1,6 +1,7 @@
 /** @jsxImportSource @opentui/solid */
 import { Plugin } from "@opencode/plugin/tui"
-import { createMemo, createSignal, onMount, Show } from "solid-js"
+import { createEffect, createMemo, createSignal, onCleanup, onMount, Show } from "solid-js"
+import { ago, nextBoundary } from "./ages"
 
 // opencode-session-time: timestamps for your OpenCode sessions.
 //
@@ -13,6 +14,9 @@ import { createMemo, createSignal, onMount, Show } from "solid-js"
 // request: a `message.footer` slot).
 
 const pad = (n: number) => String(n).padStart(2, "0")
+
+// setTimeout clamps delays to a signed 32-bit integer (~24.8 days).
+const MAX_TIMEOUT = 2_147_483_647
 
 const stopwatch = (ms?: number) => {
   if (ms === undefined || ms < 0) return "—"
@@ -285,8 +289,12 @@ const mergeAnchor = (current: Anchor, patch: Anchor): Anchor | undefined => {
 export default Plugin.define({
   id: "session-time",
   setup(context) {
-    // One tick drives every slot: any data event re-renders, plus a 1s timer for the stopwatch and ages.
+    const relativeAges = context.options.relativeAges === true
+
+    // One tick drives the footer stopwatch. Sidebar ages use a boundary timer
+    // when enabled, so an idle session does not repaint every second.
     const [tick, setTick] = createSignal(0)
+    const [agesNow, setAgesNow] = createSignal(Date.now())
     const bump = () => setTick((t) => t + 1)
 
     const [anchors, updateAnchors] = context.storage.store<AnchorStore>("session-timings-v1", {
@@ -541,6 +549,10 @@ export default Plugin.define({
       }
 
       const model = createMemo(() => {
+        if (relativeAges) agesNow()
+        // Recompute "now" on every memo run (data change, boundary wake,
+        // route/theme change) so newly arrived rows are not stale between ticks.
+        const now = relativeAges ? Date.now() : undefined
         const list = messages(context, props.sessionID)
         const session = context.data.session.get(props.sessionID)
         const anchor = anchors[props.sessionID] ?? {}
@@ -570,21 +582,48 @@ export default Plugin.define({
           .map(([n, c]) => `${n} ${c}`)
           .join(" · ")
 
+        const started = session?.time?.created
+        const age = (ms: number | undefined) => (now === undefined || !ms ? "" : ` · ${ago(ms, now)}`)
+
         return {
           summary: `${counts.user} req · ${counts.steps} steps${counts.capped ? "+" : ""}`,
-          startedTime: fmt(session?.time?.created),
+          startedTime: fmt(started),
+          startedAt: started,
+          startedAge: age(started),
           requests: String(counts.user),
           steps: `${counts.steps}${counts.capped ? "+" : ""}`,
           inputTime: fmt(inputTime),
+          inputAt: inputTime,
+          inputAge: age(inputTime),
           thoughtLabel: `Thought${thoughtCount > 1 ? ` ×${thoughtCount}` : ""}`,
           thoughtInfo: thoughtDuration ? ` · ${thoughtDuration}` : "",
           thoughtTime: fmt(thoughtTime),
+          thoughtAt: thoughtTime,
+          thoughtAge: age(thoughtTime),
           replyInfo: replyDuration ? ` · ${replyDuration}` : "",
           replyTime: fmt(replyTime),
+          replyAt: replyTime,
+          replyAge: age(replyTime),
           showTools: tools.total > 0,
           toolsTotal: String(tools.total),
           toolsInfo: toolTop ? ` · ${toolTop}` : "",
         }
+      })
+
+      createEffect(() => {
+        if (!relativeAges || !view.open) return
+        const current = model()
+        const now = Date.now()
+        const next = nextBoundary(
+          [current.startedAt, current.inputAt, current.thoughtAt, current.replyAt],
+          now,
+        )
+        if (next === undefined) return
+        // Clamp distant boundaries to the setTimeout limit and re-arm when the
+        // clamp expires. The label is unchanged until the real boundary.
+        const delay = Math.min(MAX_TIMEOUT, Math.max(250, next - now))
+        const timer = setTimeout(() => setAgesNow(Date.now()), delay)
+        onCleanup(() => clearTimeout(timer))
       })
 
       return (
@@ -602,7 +641,7 @@ export default Plugin.define({
           <Show when={view.open}>
             <box flexDirection="row" gap={1} minWidth={0}>
               <text flexShrink={0} style={{ fg: theme.text.muted }}>•</text>
-              <text wrapMode="none" truncate flexGrow={1} flexShrink={1} minWidth={0}><span style={{ fg: theme.text.muted }}>Started</span></text>
+              <text wrapMode="none" truncate flexGrow={1} flexShrink={1} minWidth={0}><span style={{ fg: theme.text.muted }}>Started{model().startedAge}</span></text>
               <text fg={theme.text.base} wrapMode="none" flexShrink={0}>{model().startedTime}</text>
             </box>
             <box flexDirection="row" gap={1} minWidth={0}>
@@ -625,7 +664,7 @@ export default Plugin.define({
               </box>
               <box flexDirection="row" gap={1} minWidth={0}>
                 <text flexShrink={0} style={{ fg: theme.text.muted }}>•</text>
-                <text wrapMode="none" truncate flexGrow={1} flexShrink={1} minWidth={0}><span style={{ fg: theme.text.muted }}>User</span></text>
+                <text wrapMode="none" truncate flexGrow={1} flexShrink={1} minWidth={0}><span style={{ fg: theme.text.muted }}>User{model().inputAge}</span></text>
                 <text fg={theme.text.base} wrapMode="none" flexShrink={0}>{model().inputTime}</text>
               </box>
               <box flexDirection="row" gap={1} minWidth={0}>
@@ -633,6 +672,7 @@ export default Plugin.define({
                 <text wrapMode="none" truncate flexGrow={1} flexShrink={1} minWidth={0}>
                   <span style={{ fg: theme.text.muted }}>{model().thoughtLabel}</span>
                   <span style={{ fg: theme.text.muted }}>{model().thoughtInfo}</span>
+                  <span style={{ fg: theme.text.muted }}>{model().thoughtAge}</span>
                 </text>
                 <text fg={theme.text.base} wrapMode="none" flexShrink={0}>{model().thoughtTime}</text>
               </box>
@@ -641,6 +681,7 @@ export default Plugin.define({
                 <text wrapMode="none" truncate flexGrow={1} flexShrink={1} minWidth={0}>
                   <span style={{ fg: theme.text.muted }}>Reply</span>
                   <span style={{ fg: theme.text.muted }}>{model().replyInfo}</span>
+                  <span style={{ fg: theme.text.muted }}>{model().replyAge}</span>
                 </text>
                 <text fg={theme.text.base} wrapMode="none" flexShrink={0}>{model().replyTime}</text>
               </box>

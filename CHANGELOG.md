@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased (fork)
+
+- Add opt-in `relativeAges` on the v0.4.0 sidebar (default off). Ages are
+  minute-granularity and appended to the muted label on `Started`, `User`,
+  `Thought`, and `Reply`; the absolute time stays right-aligned.
+- One timeout to the next displayed boundary; no 1s sidebar repaint. Collapsing
+  the `Session` block stops the timer.
+- Preserve v0.4.0 behavior exactly when the option is off.
+- Document that current OpenCode packaged/npm TUI plugins can freeze because the
+  host does not apply its Solid JSX transform under `node_modules`
+  (`anomalyco/opencode#39986`); an absolute local path is the workaround.
+
 ## 0.4.0 — 2026-11-11
 
 - Redesigned sidebar: **Session** block (start time + request/step counters) and **Last answer**
