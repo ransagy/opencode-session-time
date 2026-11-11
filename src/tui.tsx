@@ -1,7 +1,8 @@
 /** @jsxImportSource @opentui/solid */
 import { Plugin } from "@opencode/plugin/tui"
-import { createMemo, createSignal, For, onMount, Show } from "solid-js"
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js"
 import { TextAttributes } from "@opentui/core"
+import { ago, nextBoundary } from "./ages"
 
 // opencode-session-time: timestamps for your OpenCode sessions.
 //
@@ -14,6 +15,9 @@ import { TextAttributes } from "@opentui/core"
 // request: a `message.footer` slot).
 
 const pad = (n: number) => String(n).padStart(2, "0")
+
+// setTimeout clamps delays to a signed 32-bit integer (~24.8 days).
+const MAX_TIMEOUT = 2_147_483_647
 
 const stopwatch = (ms?: number) => {
   if (ms === undefined || ms < 0) return "—"
@@ -45,9 +49,9 @@ const dur = (start?: number, end?: number) => {
   return `${Math.floor(hours / 24)}d${pad(hours % 24)}h`
 }
 
-const line = (ms: number | undefined, label: string, duration?: string) => {
+const line = (ms: number | undefined, label: string, duration?: string, now?: number) => {
   if (!ms) return `— ${label}`
-  return `${fmt(ms)} ${label}${duration ? ` · ${duration}` : ""}`
+  return `${fmt(ms)} ${label}${duration ? ` · ${duration}` : ""}${now === undefined ? "" : ` · ${ago(ms, now)}`}`
 }
 
 const preview = (message: any): string => {
@@ -225,8 +229,13 @@ const mergeAnchor = (current: Anchor, patch: Anchor): Anchor | undefined => {
 export default Plugin.define({
   id: "session-time",
   setup(context) {
-    // One tick drives every slot: any data event re-renders, plus a 1s timer for the stopwatch and ages.
+    const relativeAges = context.options.relativeAges === true
+
+    // One tick drives the footer stopwatch. When ages are enabled the sidebar
+    // follows a boundary timer instead, so an idle session does not repaint
+    // every second.
     const [tick, setTick] = createSignal(0)
+    const [agesNow, setAgesNow] = createSignal(Date.now())
     const bump = () => setTick((t) => t + 1)
 
     const [anchors, updateAnchors] = context.storage.store<AnchorStore>("session-timings-v1", {
@@ -435,6 +444,12 @@ export default Plugin.define({
       onMount(() => ensureAnchors(props.sessionID))
 
       const values = createMemo((): TimingValues => {
+        // Track the boundary clock only when ages are enabled; without it the
+        // sidebar keeps v0.3.2's data-event-only refresh.
+        if (relativeAges) agesNow()
+        // Recompute "now" whenever this memo runs (data change, boundary wake,
+        // route/theme change) so newly arrived rows are not stale between ticks.
+        const now = relativeAges ? Date.now() : undefined
         const list = messages(context, props.sessionID)
         const session = context.data.session.get(props.sessionID)
         const anchor = anchors[props.sessionID] ?? {}
@@ -458,15 +473,31 @@ export default Plugin.define({
         const started = session?.time?.created
 
         return {
-          started: { at: started, rank: 0, text: line(started, "started") },
-          input: { at: inputTime, rank: 1, text: line(inputTime, "input") },
+          started: { at: started, rank: 0, text: line(started, "started", undefined, now) },
+          input: { at: inputTime, rank: 1, text: line(inputTime, "input", undefined, now) },
           thought: {
             at: thoughtTime,
             rank: 2,
-            text: line(thoughtTime, "thought", thoughtDuration),
+            text: line(thoughtTime, "thought", thoughtDuration, now),
           },
-          reply: { at: replyTime, rank: 3, text: line(replyTime, "reply", replyDuration) },
+          reply: { at: replyTime, rank: 3, text: line(replyTime, "reply", replyDuration, now) },
         }
+      })
+
+      createEffect(() => {
+        if (!relativeAges) return
+        const current = values()
+        const now = Date.now()
+        const next = nextBoundary(
+          [current.started.at, current.input.at, current.thought.at, current.reply.at],
+          now,
+        )
+        if (next === undefined) return
+        // Clamp distant boundaries to the setTimeout limit and re-arm when the
+        // clamp expires. The label is unchanged until the real boundary.
+        const delay = Math.min(MAX_TIMEOUT, Math.max(250, next - now))
+        const timer = setTimeout(() => setAgesNow(Date.now()), delay)
+        onCleanup(() => clearTimeout(timer))
       })
 
       const order = createMemo(() => {

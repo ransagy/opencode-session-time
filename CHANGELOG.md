@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased (fork)
+
+- Add opt-in `relativeAges` sidebar option (default off). Minute-granularity ages:
+  `just now` under 60s, then minutes/hours/days/weeks/months/years. Labels update at
+  the next displayed boundary through a single timeout instead of a 1-second sidebar
+  repaint; the footer stopwatch remains 1s.
+- Keep absolute timestamps and durations next to the ages; ages are additive.
+- Preserve v0.3.2's data-event-only sidebar when `relativeAges` is off.
+- Document that current OpenCode packaged/npm TUI plugins can freeze because the host
+  does not apply its Solid JSX transform under `node_modules`
+  (`anomalyco/opencode#39986`); an absolute local path is the workaround.
+
 ## 0.3.2 — 2026-11-11
 
 - Sidebar `Session Timings` again shows plain timestamps/durations refreshed on data events.
